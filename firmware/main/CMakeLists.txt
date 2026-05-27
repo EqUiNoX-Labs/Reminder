@@ -1,0 +1,18 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "ili9341_display.c"
+        "ft6336u_touch.c"
+    INCLUDE_DIRS
+        "."
+    REQUIRES
+        driver
+        esp_lcd
+        esp_timer
+        freertos
+        log
+        nvs_flash
+        lvgl
+        esp_lvgl_port
+        esp_lcd_touch
+)
