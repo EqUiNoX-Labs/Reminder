@@ -19,6 +19,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 static const char *TAG = "audio_sr";
 
@@ -87,6 +88,37 @@ static const char *sr_phrase_for_result(const esp_mn_results_t *result, char *bu
 
     sr_trim_copy(src, buf, buf_size);
     return buf;
+}
+
+static bool sr_phrase_is_ok(const char *phrase)
+{
+    if (phrase == NULL) {
+        return false;
+    }
+
+    while (*phrase != '\0' && isspace((unsigned char)*phrase)) {
+        phrase++;
+    }
+
+    return strcasecmp(phrase, "ok") == 0;
+}
+
+static bool sr_ok_detection_accepted(const esp_mn_results_t *result, char *phrase, size_t phrase_size)
+{
+    if (result == NULL || result->num <= 0) {
+        return false;
+    }
+
+    if (result->command_id[0] != SR_CMD_OK) {
+        return false;
+    }
+
+    if (result->prob[0] < SR_OK_MIN_PROB) {
+        return false;
+    }
+
+    sr_phrase_for_result(result, phrase, phrase_size);
+    return sr_phrase_is_ok(phrase);
 }
 
 static void sr_post_action(sr_action_t action)
@@ -193,7 +225,11 @@ static void sr_detect_task(void *arg)
         }
     }
     multinet->print_active_speech_commands(model_data);
-    ESP_LOGI(TAG, "Listening for \"ok\"");
+    if (multinet->set_det_threshold != NULL) {
+        multinet->set_det_threshold(model_data, SR_OK_DET_THRESHOLD);
+    }
+    ESP_LOGI(TAG, "Listening for \"ok\" (threshold=%.2f, min prob=%.2f)",
+             SR_OK_DET_THRESHOLD, SR_OK_MIN_PROB);
 
     while (s_sr_running) {
         if (sr_io_paused()) {
@@ -220,17 +256,25 @@ static void sr_detect_task(void *arg)
             esp_mn_results_t *result = multinet->get_results(model_data);
             char phrase[ESP_MN_MAX_PHRASE_LEN + 1];
 
-            sr_phrase_for_result(result, phrase, sizeof(phrase));
-
-            if (result->num > 0) {
-                ESP_LOGI(TAG, "Heard: %s (command_id=%d, phrase_id=%d, prob=%.2f)",
-                         phrase,
-                         result->command_id[0],
-                         result->phrase_id[0],
-                         result->prob[0]);
-            } else {
-                ESP_LOGI(TAG, "Heard: %s", phrase);
+            if (!sr_ok_detection_accepted(result, phrase, sizeof(phrase))) {
+                if (result != NULL && result->num > 0) {
+                    sr_phrase_for_result(result, phrase, sizeof(phrase));
+                    ESP_LOGI(TAG, "Ignored detection: %s (command_id=%d, prob=%.2f)",
+                             phrase,
+                             result->command_id[0],
+                             result->prob[0]);
+                } else {
+                    ESP_LOGI(TAG, "Ignored detection: no result");
+                }
+                multinet->clean(model_data);
+                continue;
             }
+
+            ESP_LOGI(TAG, "Heard: %s (command_id=%d, phrase_id=%d, prob=%.2f)",
+                     phrase,
+                     result->command_id[0],
+                     result->phrase_id[0],
+                     result->prob[0]);
 
             sr_post_action(SR_ACTION_ALARM_STOP);
             multinet->clean(model_data);

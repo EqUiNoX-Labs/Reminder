@@ -72,4 +72,8 @@
 #define ALARM_MAX_CYCLES               10
 #define ALARM_TUNE_VOLUME              70
 
+/* Speech command "ok" — higher values reduce false triggers. */
+#define SR_OK_DET_THRESHOLD            0.78f
+#define SR_OK_MIN_PROB                 0.75f
+
 #define BOARD_UART_BAUD_RATE     115200

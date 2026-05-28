@@ -12,14 +12,9 @@ static const char *NS = "reminder";
 
 void reminder_entry_format_default_text(uint8_t hour24, uint8_t minute, char *buf, size_t buf_size)
 {
-    bool is_pm = hour24 >= 12;
-    int hour12 = hour24 % 12;
-    if (hour12 == 0) {
-        hour12 = 12;
-    }
-
-    snprintf(buf, buf_size, "This is your %d:%02d %s reminder.",
-             hour12, minute, is_pm ? "pm" : "am");
+    (void)hour24;
+    (void)minute;
+    snprintf(buf, buf_size, "This is your reminder");
 }
 
 void reminder_entry_set_default_text(reminder_entry_t *entry)

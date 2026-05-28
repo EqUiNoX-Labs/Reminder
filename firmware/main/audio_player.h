@@ -30,6 +30,9 @@ esp_err_t audio_play_classical_tune(volatile bool *stop_flag);
 esp_err_t audio_tts_init(void);
 esp_err_t audio_tts_play_joke(void);
 esp_err_t audio_tts_speak(const char *text, volatile bool *stop_flag);
+esp_err_t audio_tts_cache_alarm(const char *text, volatile bool *stop_flag);
+esp_err_t audio_tts_play_alarm(volatile bool *stop_flag);
+void audio_tts_clear_alarm_cache(void);
 
 esp_err_t audio_sr_start(void);
 void audio_sr_stop(void);

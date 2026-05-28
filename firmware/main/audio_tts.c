@@ -58,6 +58,10 @@ static size_t s_joke_samples;
 static bool s_joke_ready;
 static volatile bool s_joke_prerendering;
 
+static int16_t *s_alarm_buf;
+static size_t s_alarm_samples;
+static bool s_alarm_ready;
+
 static void tts_idle_cb(void)
 {
     if (s_tts_idle_sem) {
@@ -189,6 +193,27 @@ static esp_err_t tts_cache_joke(void)
     ESP_LOGI(TAG, "Joke cached: %u samples (%.1f s)",
              (unsigned)s_joke_samples,
              (float)s_joke_samples / PICOTTS_SAMPLE_FREQ_HZ);
+    return ESP_OK;
+}
+
+static esp_err_t tts_cache_alarm_message(const char *text)
+{
+    tts_render_ctx_t ctx = {0};
+    esp_err_t err = tts_synthesize_text(text, &ctx);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (s_alarm_buf != NULL) {
+        heap_caps_free(s_alarm_buf);
+    }
+
+    s_alarm_buf = ctx.buf;
+    s_alarm_samples = ctx.samples;
+    s_alarm_ready = true;
+    ESP_LOGI(TAG, "Alarm message cached: %u samples (%.1f s)",
+             (unsigned)s_alarm_samples,
+             (float)s_alarm_samples / PICOTTS_SAMPLE_FREQ_HZ);
     return ESP_OK;
 }
 
@@ -359,4 +384,70 @@ esp_err_t audio_tts_speak(const char *text, volatile bool *stop_flag)
         ESP_LOGI(TAG, "Speech finished");
     }
     return err;
+}
+
+esp_err_t audio_tts_cache_alarm(const char *text, volatile bool *stop_flag)
+{
+    ESP_RETURN_ON_FALSE(s_tts_mutex, ESP_ERR_INVALID_STATE, TAG, "TTS not initialized");
+    ESP_RETURN_ON_FALSE(text && text[0] != '\0', ESP_ERR_INVALID_ARG, TAG, "empty text");
+    if (stop_flag != NULL && *stop_flag) {
+        return ESP_OK;
+    }
+
+    if (xSemaphoreTake(s_tts_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Alarm cache skipped (TTS busy)");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    audio_sr_pause(true);
+    audio_codec_pause_input(true);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    esp_err_t err = tts_cache_alarm_message(text);
+
+    audio_codec_pause_input(false);
+    audio_sr_pause(false);
+    xSemaphoreGive(s_tts_mutex);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Alarm message ready");
+    }
+    return err;
+}
+
+esp_err_t audio_tts_play_alarm(volatile bool *stop_flag)
+{
+    ESP_RETURN_ON_FALSE(s_tts_mutex, ESP_ERR_INVALID_STATE, TAG, "TTS not initialized");
+    ESP_RETURN_ON_FALSE(s_alarm_ready && s_alarm_buf != NULL && s_alarm_samples > 0,
+                        ESP_ERR_INVALID_STATE, TAG, "alarm not cached");
+
+    if (xSemaphoreTake(s_tts_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Alarm playback skipped (TTS busy)");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    audio_sr_pause(true);
+    audio_codec_pause_input(true);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    esp_err_t err = tts_play_buffer(s_alarm_buf, s_alarm_samples, stop_flag);
+
+    audio_codec_pause_input(false);
+    audio_sr_pause(false);
+    xSemaphoreGive(s_tts_mutex);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Alarm speech finished");
+    }
+    return err;
+}
+
+void audio_tts_clear_alarm_cache(void)
+{
+    if (s_alarm_buf != NULL) {
+        heap_caps_free(s_alarm_buf);
+        s_alarm_buf = NULL;
+    }
+    s_alarm_samples = 0;
+    s_alarm_ready = false;
 }
