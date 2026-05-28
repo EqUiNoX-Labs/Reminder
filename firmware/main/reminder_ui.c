@@ -52,15 +52,8 @@ static const char *TAG = "reminder_ui";
 #define UI_REM_REMOVE_BTN_H      28
 #define UI_REM_EDIT_KB_H         132
 #define UI_REM_EDIT_KB_MARGIN    6
-#define UI_REM_EDIT_HEADER_H     36
-#define UI_REM_EDIT_TA_H         72
+#define UI_REM_EDIT_TOP_PAD      4
 #define UI_REM_EDIT_ROW_H        44
-#define UI_REM_EDIT_GAP          10
-#define UI_REM_EDIT_MSG_LBL_Y    0
-#define UI_REM_EDIT_TA_Y         20
-#define UI_REM_EDIT_TIME_Y       (UI_REM_EDIT_TA_Y + UI_REM_EDIT_TA_H + UI_REM_EDIT_GAP)
-#define UI_REM_EDIT_FOOTER_Y     (UI_REM_EDIT_TIME_Y + UI_REM_EDIT_ROW_H + UI_REM_EDIT_GAP)
-#define UI_REM_EDIT_FOOTER_Y_WIZ (UI_REM_EDIT_TA_Y + UI_REM_EDIT_TA_H + UI_REM_EDIT_GAP)
 #define UI_ALARM_TASK_STACK      8192
 #define UI_ALARM_TASK_PRIO       4
 
@@ -116,13 +109,10 @@ typedef struct {
     lv_obj_t *scr_reminder_edit;
     lv_obj_t *reminder_edit_scroll;
     lv_obj_t *reminder_edit_time_row;
-    lv_obj_t *reminder_edit_footer;
-    lv_obj_t *lbl_reminder_edit_title;
     lv_obj_t *ta_reminder_text;
     lv_obj_t *kb_reminder_text;
     lv_obj_t *lbl_reminder_edit_time;
     lv_obj_t *btn_reminder_edit_time;
-    lv_obj_t *lbl_reminder_edit_save;
     lv_obj_t *reminder_rows[REMINDER_COUNT];
     lv_obj_t *reminder_lbls[REMINDER_COUNT];
     lv_obj_t *reminder_time_lbls[REMINDER_COUNT];
@@ -173,8 +163,9 @@ static void ui_apply_pickers_to_target(void);
 static void ui_open_time_editor(ui_pick_target_t target, int reminder_idx);
 static void ui_open_wizard_message_screen(void);
 static void ui_build_reminder_edit_screen(void);
-static void ui_reminder_edit_cancel_cb(lv_event_t *event);
-static void ui_reminder_edit_save_cb(lv_event_t *event);
+static void ui_reminder_edit_do_save(void);
+static void ui_reminder_kb_action_cb(lv_event_t *event);
+static void ui_reminder_ta_event_cb(lv_event_t *event);
 static void ui_reminder_edit_show_keyboard(void);
 static void ui_reminder_edit_hide_keyboard(void);
 static void ui_add_centered_time_pickers(lv_obj_t *scr, int mid_y,
@@ -288,8 +279,24 @@ static void ui_style_textarea_cursor(lv_obj_t *ta)
     lv_obj_set_style_border_side(ta, LV_BORDER_SIDE_LEFT, LV_PART_CURSOR);
     lv_obj_set_style_pad_left(ta, 0, LV_PART_CURSOR);
     lv_obj_set_style_pad_right(ta, 0, LV_PART_CURSOR);
-    lv_obj_set_style_anim_duration(ta, 500, LV_PART_CURSOR);
+    lv_obj_set_style_anim_duration(ta, 0, LV_PART_CURSOR);
+    lv_obj_set_style_border_color(ta, lv_color_hex(UI_ACCENT_SOFT), LV_PART_CURSOR | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(ta, 2, LV_PART_CURSOR | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_side(ta, LV_BORDER_SIDE_LEFT, LV_PART_CURSOR | LV_STATE_FOCUSED);
+    lv_obj_set_style_anim_duration(ta, 0, LV_PART_CURSOR | LV_STATE_FOCUSED);
     lv_textarea_set_cursor_click_pos(ta, true);
+    lv_obj_remove_flag(ta, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
+}
+
+static void ui_reminder_ta_event_cb(lv_event_t *event)
+{
+    lv_obj_t *ta = lv_event_get_target(event);
+    const lv_event_code_t code = lv_event_get_code(event);
+
+    if (code == LV_EVENT_PRESSED || code == LV_EVENT_FOCUSED) {
+        lv_obj_add_state(ta, LV_STATE_FOCUSED);
+        lv_keyboard_set_textarea(s_ui.kb_reminder_text, ta);
+    }
 }
 
 static void ui_style_scroll(lv_obj_t *obj)
@@ -784,34 +791,24 @@ static void ui_layout_reminder_edit_screen(void)
     if (s_ui.reminder_edit_time_row != NULL) {
         lv_obj_add_flag(s_ui.reminder_edit_time_row, LV_OBJ_FLAG_HIDDEN);
     }
-
-    if (s_ui.reminder_edit_footer != NULL) {
-        lv_obj_set_y(s_ui.reminder_edit_footer, UI_REM_EDIT_FOOTER_Y_WIZ);
-    }
 }
 
 static void ui_open_wizard_message_screen(void)
 {
-    char time_buf[16];
-    ui_format_time_12h(s_wizard_draft_hour24, s_wizard_draft_minute, time_buf, sizeof(time_buf));
-
-    lv_label_set_text_fmt(s_ui.lbl_reminder_edit_title, "Message for %s", time_buf);
-
     if (s_wizard_mode == UI_WIZARD_ADD) {
         s_edit_reminder_idx = -1;
         char default_text[REMINDER_TEXT_LEN];
         reminder_entry_format_default_text(s_wizard_draft_hour24, s_wizard_draft_minute,
                                            default_text, sizeof(default_text));
         lv_textarea_set_text(s_ui.ta_reminder_text, default_text);
-        lv_label_set_text(s_ui.lbl_reminder_edit_save, "Add");
     } else {
         lv_textarea_set_text(s_ui.ta_reminder_text, s_ui.settings.reminders[s_edit_reminder_idx].text);
-        lv_label_set_text(s_ui.lbl_reminder_edit_save, "Save");
     }
 
     lv_textarea_set_cursor_pos(s_ui.ta_reminder_text, LV_TEXTAREA_CURSOR_LAST);
     ui_layout_reminder_edit_screen();
     ui_reminder_edit_show_keyboard();
+    lv_obj_add_state(s_ui.ta_reminder_text, LV_STATE_FOCUSED);
     if (s_ui.reminder_edit_scroll != NULL) {
         lv_obj_scroll_to_y(s_ui.reminder_edit_scroll, 0, LV_ANIM_OFF);
     }
@@ -823,17 +820,20 @@ static void ui_open_wizard_message_screen(void)
 static const char *const ui_reminder_kb_map[] = {
     "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
     "a", "s", "d", "f", "g", "h", "j", "k", "l", ".", "\n",
-    "z", "x", "c", "v", "b", "n", "m", ",", " ", "-", "",
+    "z", "x", "c", "v", "b", "n", "m", ",", " ", LV_SYMBOL_OK, "",
 };
 
 static const lv_buttonmatrix_ctrl_t ui_reminder_kb_ctrl[] = {
+    /* row 1: q-p + backspace (11) */
     UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1),
     UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BUTTON_FLAGS | 2,
+    UI_KB_BTN(2),
+    /* row 2: a-l + . (10) */
     UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1),
     UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1),
+    /* row 3: z-m + , + space + ok (10) */
     UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1),
-    UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(5), UI_KB_BTN(1),
+    UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(1), UI_KB_BTN(6), UI_KB_BTN(1),
 };
 
 static void ui_style_reminder_keyboard(lv_obj_t *kb)
@@ -842,6 +842,9 @@ static void ui_style_reminder_keyboard(lv_obj_t *kb)
     lv_obj_set_style_bg_color(kb, lv_color_hex(UI_SURFACE_RAISED), LV_PART_ITEMS);
     lv_obj_set_style_bg_color(kb, lv_color_hex(UI_SURFACE_PRESSED), LV_PART_ITEMS | LV_STATE_PRESSED);
     lv_obj_set_style_text_color(kb, lv_color_hex(UI_TEXT_PRIMARY), LV_PART_ITEMS);
+    lv_obj_set_style_text_opa(kb, LV_OPA_COVER, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(kb, lv_color_hex(UI_TEXT_PRIMARY), LV_PART_ITEMS | LV_STATE_PRESSED);
+    lv_obj_set_style_text_opa(kb, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_PRESSED);
     lv_obj_set_style_text_font(kb, &lv_font_montserrat_16, LV_PART_ITEMS);
     lv_obj_set_style_border_color(kb, lv_color_hex(UI_BORDER_COLOR), LV_PART_ITEMS);
     lv_obj_set_style_border_width(kb, 1, LV_PART_ITEMS);
@@ -851,18 +854,36 @@ static void ui_style_reminder_keyboard(lv_obj_t *kb)
     lv_obj_set_style_pad_all(kb, UI_REM_EDIT_KB_MARGIN, LV_PART_MAIN);
     lv_keyboard_set_map(kb, LV_KEYBOARD_MODE_USER_1, ui_reminder_kb_map, ui_reminder_kb_ctrl);
     lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_USER_1);
+    lv_obj_add_event_cb(kb, ui_reminder_kb_action_cb, LV_EVENT_READY, NULL);
 }
 
-static void ui_reminder_edit_set_scroll_height(bool kb_visible)
+static void ui_reminder_kb_action_cb(lv_event_t *event)
 {
-    if (s_ui.reminder_edit_scroll == NULL) {
+    if (lv_event_get_code(event) == LV_EVENT_READY) {
+        ui_reminder_edit_do_save();
+    }
+}
+
+static void ui_reminder_edit_layout_content(bool kb_visible)
+{
+    if (s_ui.reminder_edit_scroll == NULL || s_ui.ta_reminder_text == NULL) {
         return;
     }
 
-    const int h = kb_visible
-                      ? (ILI9341_V_RES - UI_REM_EDIT_HEADER_H - UI_REM_EDIT_KB_H - UI_REM_EDIT_KB_MARGIN - 4)
-                      : (ILI9341_V_RES - UI_REM_EDIT_HEADER_H - 4);
-    lv_obj_set_height(s_ui.reminder_edit_scroll, h);
+    const int scroll_h = kb_visible
+                             ? (ILI9341_V_RES - UI_REM_EDIT_TOP_PAD - UI_REM_EDIT_KB_H -
+                                UI_REM_EDIT_KB_MARGIN - 4)
+                             : (ILI9341_V_RES - UI_REM_EDIT_TOP_PAD - 4);
+    const int scroll_w = ILI9341_H_RES - 16;
+
+    if (lv_obj_get_width(s_ui.reminder_edit_scroll) != scroll_w ||
+        lv_obj_get_height(s_ui.reminder_edit_scroll) != scroll_h) {
+        lv_obj_set_size(s_ui.reminder_edit_scroll, scroll_w, scroll_h);
+        lv_obj_set_size(s_ui.ta_reminder_text, scroll_w, scroll_h);
+    }
+
+    lv_obj_align(s_ui.reminder_edit_scroll, LV_ALIGN_TOP_MID, 0, UI_REM_EDIT_TOP_PAD);
+    lv_obj_align(s_ui.ta_reminder_text, LV_ALIGN_TOP_LEFT, 0, 0);
 }
 
 static void ui_reminder_edit_show_keyboard(void)
@@ -873,7 +894,7 @@ static void ui_reminder_edit_show_keyboard(void)
 
     lv_keyboard_set_textarea(s_ui.kb_reminder_text, s_ui.ta_reminder_text);
     lv_obj_remove_flag(s_ui.kb_reminder_text, LV_OBJ_FLAG_HIDDEN);
-    ui_reminder_edit_set_scroll_height(true);
+    ui_reminder_edit_layout_content(true);
 }
 
 static void ui_reminder_edit_hide_keyboard(void)
@@ -884,26 +905,11 @@ static void ui_reminder_edit_hide_keyboard(void)
 
     lv_keyboard_set_textarea(s_ui.kb_reminder_text, NULL);
     lv_obj_add_flag(s_ui.kb_reminder_text, LV_OBJ_FLAG_HIDDEN);
-    ui_reminder_edit_set_scroll_height(false);
+    ui_reminder_edit_layout_content(false);
 }
 
-static void ui_reminder_edit_cancel_cb(lv_event_t *event)
+static void ui_reminder_edit_do_save(void)
 {
-    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
-        return;
-    }
-
-    s_wizard_mode = UI_WIZARD_NONE;
-    ui_reminder_edit_hide_keyboard();
-    reminder_ui_show_settings();
-}
-
-static void ui_reminder_edit_save_cb(lv_event_t *event)
-{
-    if (lv_event_get_code(event) != LV_EVENT_CLICKED) {
-        return;
-    }
-
     const char *text = lv_textarea_get_text(s_ui.ta_reminder_text);
     ui_reminder_edit_hide_keyboard();
 
@@ -951,13 +957,6 @@ static void ui_build_reminder_edit_screen(void)
 {
     s_ui.scr_reminder_edit = ui_create_screen();
 
-    s_ui.lbl_reminder_edit_title = lv_label_create(s_ui.scr_reminder_edit);
-    lv_label_set_text(s_ui.lbl_reminder_edit_title, "Message");
-    lv_obj_set_style_text_color(s_ui.lbl_reminder_edit_title, lv_color_hex(UI_TEXT_PRIMARY), 0);
-    lv_obj_set_style_text_font(s_ui.lbl_reminder_edit_title, &lv_font_montserrat_28, 0);
-    lv_obj_align(s_ui.lbl_reminder_edit_title, LV_ALIGN_TOP_MID, 0, 8);
-    ui_make_noninteractive(s_ui.lbl_reminder_edit_title);
-
     s_ui.kb_reminder_text = lv_keyboard_create(s_ui.scr_reminder_edit);
     lv_obj_set_size(s_ui.kb_reminder_text, ILI9341_H_RES, UI_REM_EDIT_KB_H);
     lv_obj_align(s_ui.kb_reminder_text, LV_ALIGN_BOTTOM_MID, 0, -UI_REM_EDIT_KB_MARGIN);
@@ -965,23 +964,11 @@ static void ui_build_reminder_edit_screen(void)
     lv_obj_add_flag(s_ui.kb_reminder_text, LV_OBJ_FLAG_HIDDEN);
 
     s_ui.reminder_edit_scroll = lv_obj_create(s_ui.scr_reminder_edit);
-    lv_obj_set_size(s_ui.reminder_edit_scroll, ILI9341_H_RES - 16,
-                    ILI9341_V_RES - UI_REM_EDIT_HEADER_H - 4);
-    lv_obj_align(s_ui.reminder_edit_scroll, LV_ALIGN_TOP_MID, 0, UI_REM_EDIT_HEADER_H);
     ui_style_scroll(s_ui.reminder_edit_scroll);
     lv_obj_set_scrollbar_mode(s_ui.reminder_edit_scroll, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_add_flag(s_ui.reminder_edit_scroll, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *lbl_msg = lv_label_create(s_ui.reminder_edit_scroll);
-    lv_label_set_text(lbl_msg, "Message");
-    lv_obj_set_style_text_color(lbl_msg, lv_color_hex(UI_TEXT_SECONDARY), 0);
-    lv_obj_set_style_text_font(lbl_msg, &lv_font_montserrat_16, 0);
-    lv_obj_align(lbl_msg, LV_ALIGN_TOP_LEFT, 4, UI_REM_EDIT_MSG_LBL_Y);
-    ui_make_noninteractive(lbl_msg);
+    lv_obj_remove_flag(s_ui.reminder_edit_scroll, LV_OBJ_FLAG_SCROLLABLE);
 
     s_ui.ta_reminder_text = lv_textarea_create(s_ui.reminder_edit_scroll);
-    lv_obj_set_size(s_ui.ta_reminder_text, 288, UI_REM_EDIT_TA_H);
-    lv_obj_align(s_ui.ta_reminder_text, LV_ALIGN_TOP_LEFT, 0, UI_REM_EDIT_TA_Y);
     lv_textarea_set_max_length(s_ui.ta_reminder_text, REMINDER_TEXT_LEN - 1);
     lv_textarea_set_one_line(s_ui.ta_reminder_text, false);
     ui_style_input(s_ui.ta_reminder_text);
@@ -989,10 +976,12 @@ static void ui_build_reminder_edit_screen(void)
     lv_obj_set_style_text_color(s_ui.ta_reminder_text, lv_color_hex(UI_TEXT_PRIMARY), 0);
     lv_obj_set_style_text_font(s_ui.ta_reminder_text, &lv_font_montserrat_14, 0);
     lv_obj_set_style_pad_all(s_ui.ta_reminder_text, 8, LV_PART_MAIN);
+    lv_obj_add_event_cb(s_ui.ta_reminder_text, ui_reminder_ta_event_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(s_ui.ta_reminder_text, ui_reminder_ta_event_cb, LV_EVENT_FOCUSED, NULL);
 
     s_ui.reminder_edit_time_row = lv_obj_create(s_ui.reminder_edit_scroll);
     lv_obj_set_size(s_ui.reminder_edit_time_row, 288, UI_REM_EDIT_ROW_H);
-    lv_obj_align(s_ui.reminder_edit_time_row, LV_ALIGN_TOP_LEFT, 0, UI_REM_EDIT_TIME_Y);
+    lv_obj_align(s_ui.reminder_edit_time_row, LV_ALIGN_TOP_LEFT, 0, 0);
     ui_style_card(s_ui.reminder_edit_time_row);
     lv_obj_set_style_pad_all(s_ui.reminder_edit_time_row, 0, 0);
     lv_obj_remove_flag(s_ui.reminder_edit_time_row, LV_OBJ_FLAG_SCROLLABLE);
@@ -1016,34 +1005,7 @@ static void ui_build_reminder_edit_screen(void)
     lv_obj_center(lbl_time);
     ui_make_noninteractive(lbl_time);
 
-    s_ui.reminder_edit_footer = lv_obj_create(s_ui.reminder_edit_scroll);
-    lv_obj_set_size(s_ui.reminder_edit_footer, 288, UI_REM_EDIT_ROW_H);
-    lv_obj_align(s_ui.reminder_edit_footer, LV_ALIGN_TOP_LEFT, 0, UI_REM_EDIT_FOOTER_Y_WIZ);
-    ui_style_scroll(s_ui.reminder_edit_footer);
-    ui_make_noninteractive(s_ui.reminder_edit_footer);
-
-    lv_obj_t *btn_cancel = lv_button_create(s_ui.reminder_edit_footer);
-    lv_obj_set_size(btn_cancel, 120, 34);
-    lv_obj_align(btn_cancel, LV_ALIGN_LEFT_MID, 0, 0);
-    ui_style_step_btn(btn_cancel);
-    lv_obj_t *lbl_cancel = lv_label_create(btn_cancel);
-    lv_label_set_text(lbl_cancel, "Cancel");
-    lv_obj_set_style_text_color(lbl_cancel, lv_color_hex(UI_TEXT_PRIMARY), 0);
-    lv_obj_center(lbl_cancel);
-    ui_make_noninteractive(lbl_cancel);
-    lv_obj_add_event_cb(btn_cancel, ui_reminder_edit_cancel_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *btn_save = lv_button_create(s_ui.reminder_edit_footer);
-    lv_obj_set_size(btn_save, 120, 34);
-    lv_obj_align(btn_save, LV_ALIGN_RIGHT_MID, 0, 0);
-    ui_style_accent_btn(btn_save);
-    lv_obj_t *lbl_save = lv_label_create(btn_save);
-    lv_label_set_text(lbl_save, "Save");
-    lv_obj_set_style_text_color(lbl_save, lv_color_hex(UI_ON_ACCENT), 0);
-    lv_obj_center(lbl_save);
-    ui_make_noninteractive(lbl_save);
-    s_ui.lbl_reminder_edit_save = lbl_save;
-    lv_obj_add_event_cb(btn_save, ui_reminder_edit_save_cb, LV_EVENT_CLICKED, NULL);
+    ui_layout_reminder_edit_screen();
 }
 
 static void ui_reminder_row_cb(lv_event_t *event)
@@ -1524,10 +1486,10 @@ static void ui_build_clock_screen(void)
     s_ui.scr_clock = ui_create_screen();
 
     lv_obj_t *title = lv_label_create(s_ui.scr_clock);
-    lv_label_set_text(title, "Reminder");
-    lv_obj_set_style_text_color(title, lv_color_hex(UI_TEXT_MUTED), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+    lv_label_set_text(title, "Time");
+    lv_obj_set_style_text_color(title, lv_color_hex(UI_TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
     ui_make_noninteractive(title);
 
     s_ui.lbl_clock = lv_label_create(s_ui.scr_clock);
@@ -1579,6 +1541,12 @@ static void ui_set_time_btn_cb(lv_event_t *event)
     reminder_storage_save(&s_ui.settings);
 
     ESP_LOGI(TAG, "Time set to %02d:%02d %s", hour12, s_ui.set_minute, is_pm ? "PM" : "AM");
+
+    int hour24;
+    int minute;
+    int second;
+    ui_get_now(&hour24, &minute, &second);
+    ui_check_reminders(hour24, minute, second);
 
     if (s_ui.time_set_sem) {
         xSemaphoreGive(s_ui.time_set_sem);
@@ -1657,6 +1625,10 @@ esp_err_t reminder_ui_wait_time_set(void)
 
 void reminder_ui_show_clock(void)
 {
+    if (s_alarm_active) {
+        return;
+    }
+
     ui_load_screen(s_ui.scr_clock);
     ui_update_clock_label();
 }

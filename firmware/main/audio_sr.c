@@ -45,6 +45,7 @@ static srmodel_list_t *s_models;
 static volatile int s_sr_running;
 static volatile int s_sr_pause_depth;
 static volatile int s_sr_paused;
+static volatile int s_sr_speaker_playback;
 static QueueHandle_t s_action_queue;
 
 static void sr_trim_copy(const char *src, char *dst, size_t dst_size)
@@ -180,6 +181,10 @@ static void sr_feed_task(void *arg)
         }
 
         s_afe_handle->feed(afe_data, buffer);
+
+        if (s_sr_speaker_playback && !s_sr_paused) {
+            vTaskDelay(pdMS_TO_TICKS(2));
+        }
     }
 
     free(buffer);
@@ -232,53 +237,64 @@ static void sr_detect_task(void *arg)
              SR_OK_DET_THRESHOLD, SR_OK_MIN_PROB);
 
     while (s_sr_running) {
-        if (sr_io_paused()) {
+        if (s_sr_paused) {
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
 
-        afe_fetch_result_t *res = s_afe_handle->fetch(afe_data);
-        if (!res || res->ret_value == ESP_FAIL) {
-            ESP_LOGW(TAG, "AFE fetch failed");
-            break;
-        }
-
-        if (s_sr_paused) {
+        if (audio_codec_input_paused()) {
+            vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
 
-        esp_mn_state_t state = multinet->detect(model_data, res->data);
-        if (state == ESP_MN_STATE_DETECTING) {
-            continue;
-        }
+        const int max_fetches = s_sr_speaker_playback ? 4 : 1;
+        bool fetched = false;
 
-        if (state == ESP_MN_STATE_DETECTED) {
-            esp_mn_results_t *result = multinet->get_results(model_data);
-            char phrase[ESP_MN_MAX_PHRASE_LEN + 1];
+        for (int i = 0; i < max_fetches; i++) {
+            afe_fetch_result_t *res = s_afe_handle->fetch(afe_data);
+            if (!res || res->ret_value == ESP_FAIL) {
+                break;
+            }
 
-            if (!sr_ok_detection_accepted(result, phrase, sizeof(phrase))) {
-                if (result != NULL && result->num > 0) {
-                    sr_phrase_for_result(result, phrase, sizeof(phrase));
-                    ESP_LOGI(TAG, "Ignored detection: %s (command_id=%d, prob=%.2f)",
-                             phrase,
-                             result->command_id[0],
-                             result->prob[0]);
-                } else {
-                    ESP_LOGI(TAG, "Ignored detection: no result");
-                }
-                multinet->clean(model_data);
+            fetched = true;
+
+            esp_mn_state_t state = multinet->detect(model_data, res->data);
+            if (state == ESP_MN_STATE_DETECTING) {
                 continue;
             }
 
-            ESP_LOGI(TAG, "Heard: %s (command_id=%d, phrase_id=%d, prob=%.2f)",
-                     phrase,
-                     result->command_id[0],
-                     result->phrase_id[0],
-                     result->prob[0]);
+            if (state == ESP_MN_STATE_DETECTED) {
+                esp_mn_results_t *result = multinet->get_results(model_data);
+                char phrase[ESP_MN_MAX_PHRASE_LEN + 1];
 
-            sr_post_action(SR_ACTION_ALARM_STOP);
-            multinet->clean(model_data);
-            continue;
+                if (!sr_ok_detection_accepted(result, phrase, sizeof(phrase))) {
+                    if (result != NULL && result->num > 0) {
+                        sr_phrase_for_result(result, phrase, sizeof(phrase));
+                        ESP_LOGI(TAG, "Ignored detection: %s (command_id=%d, prob=%.2f)",
+                                 phrase,
+                                 result->command_id[0],
+                                 result->prob[0]);
+                    } else {
+                        ESP_LOGI(TAG, "Ignored detection: no result");
+                    }
+                    multinet->clean(model_data);
+                    continue;
+                }
+
+                ESP_LOGI(TAG, "Heard: %s (command_id=%d, phrase_id=%d, prob=%.2f)",
+                         phrase,
+                         result->command_id[0],
+                         result->phrase_id[0],
+                         result->prob[0]);
+
+                sr_post_action(SR_ACTION_ALARM_STOP);
+                multinet->clean(model_data);
+                break;
+            }
+        }
+
+        if (!fetched) {
+            vTaskDelay(pdMS_TO_TICKS(1));
         }
     }
 
@@ -310,6 +326,7 @@ esp_err_t audio_sr_start(void)
     s_sr_running = 1;
     s_sr_pause_depth = 0;
     s_sr_paused = 0;
+    s_sr_speaker_playback = 0;
 
     BaseType_t ok = xTaskCreatePinnedToCore(
         sr_action_task, "sr_action", SR_ACTION_TASK_STACK, NULL, SR_ACTION_TASK_PRIORITY, NULL, SR_ACTION_CORE);
@@ -348,7 +365,13 @@ void audio_sr_stop(void)
 
     s_sr_pause_depth = 0;
     s_sr_paused = 0;
+    s_sr_speaker_playback = 0;
     ESP_LOGI(TAG, "Speech recognition stopped");
+}
+
+void audio_sr_set_speaker_playback(bool active)
+{
+    s_sr_speaker_playback = active ? 1 : 0;
 }
 
 void audio_sr_pause(bool pause)

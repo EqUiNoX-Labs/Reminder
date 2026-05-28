@@ -261,6 +261,8 @@ esp_err_t audio_play_classical_tune(volatile bool *stop_flag)
 {
     ESP_RETURN_ON_FALSE(s_codec, ESP_ERR_INVALID_STATE, TAG, "codec not init");
 
+    audio_sr_set_speaker_playback(true);
+
     const uint32_t prev_rate = s_synth_sample_rate;
     s_synth_sample_rate = AUDIO_SR_SAMPLE_RATE_HZ;
 
@@ -268,6 +270,7 @@ esp_err_t audio_play_classical_tune(volatile bool *stop_flag)
         esp_err_t open_err = audio_io_open_mono_16k();
         if (open_err != ESP_OK) {
             s_synth_sample_rate = prev_rate;
+            audio_sr_set_speaker_playback(false);
             return open_err;
         }
     }
@@ -285,6 +288,7 @@ esp_err_t audio_play_classical_tune(volatile bool *stop_flag)
 
     if (!sequencer_advance_one_shot(&seq)) {
         s_synth_sample_rate = prev_rate;
+        audio_sr_set_speaker_playback(false);
         return ESP_FAIL;
     }
 
@@ -300,12 +304,15 @@ esp_err_t audio_play_classical_tune(volatile bool *stop_flag)
             break;
         }
 
+        taskYIELD();
+
         if (finished) {
             break;
         }
     }
 
     s_synth_sample_rate = prev_rate;
+    audio_sr_set_speaker_playback(false);
     return err;
 }
 

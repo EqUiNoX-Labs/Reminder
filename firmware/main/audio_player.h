@@ -38,3 +38,4 @@ esp_err_t audio_sr_start(void);
 void audio_sr_stop(void);
 void audio_sr_pause(bool pause);
 bool audio_sr_is_running(void);
+void audio_sr_set_speaker_playback(bool active);
