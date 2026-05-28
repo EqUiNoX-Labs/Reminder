@@ -1,34 +1,78 @@
 #include "board_config.h"
+#include "board_i2c.h"
+#include "audio_player.h"
 #include "ft6336u_touch.h"
 #include "ili9341_display.h"
+#include "reminder_ui.h"
 
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_touch.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
-#include "lvgl.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "nvs_flash.h"
 
 static const char *TAG = "Reminder";
 
-static void reminder_create_welcome_screen(void)
+#define STARTUP_TASK_STACK       (12 * 1024)
+#define STARTUP_TASK_PRIORITY    5
+#define STARTUP_TASK_CORE        0
+
+static void reminder_log_memory(void)
 {
-    lv_obj_t *scr = lv_screen_active();
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x1a1a2e), 0);
+    const size_t internal_total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    const size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "Reminder");
-    lv_obj_set_style_text_color(title, lv_color_hex(0xeeeeee), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
-    lv_obj_align(title, LV_ALIGN_CENTER, 0, -12);
+    ESP_LOGI(TAG, "Memory internal: %u KB total, %u KB free",
+             (unsigned)(internal_total / 1024), (unsigned)(internal_free / 1024));
 
-    lv_obj_t *subtitle = lv_label_create(scr);
-    lv_label_set_text(subtitle, "Welcome");
-    lv_obj_set_style_text_color(subtitle, lv_color_hex(0x888888), 0);
-    lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_16, 0);
-    lv_obj_align(subtitle, LV_ALIGN_CENTER, 0, 24);
+    if (psram_total > 0) {
+        ESP_LOGI(TAG, "Memory PSRAM:    %u KB total, %u KB free",
+                 (unsigned)(psram_total / 1024), (unsigned)(psram_free / 1024));
+    }
+}
+
+static void reminder_ui_progress(int percent, const char *status)
+{
+    lvgl_port_lock(0);
+    reminder_ui_set_init_progress(percent, status);
+    lvgl_port_unlock();
+}
+
+static void reminder_startup_task(void *arg)
+{
+    (void)arg;
+
+    reminder_ui_progress(20, "Audio codec...");
+    ESP_ERROR_CHECK(audio_player_init());
+
+    reminder_ui_progress(50, "Speech synthesis...");
+    ESP_ERROR_CHECK(audio_tts_init());
+
+    reminder_ui_progress(100, "Ready");
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    lvgl_port_lock(0);
+    reminder_ui_show_set_time();
+    lvgl_port_unlock();
+
+    ESP_LOGI(TAG, "Waiting for time to be set on screen");
+    ESP_ERROR_CHECK(reminder_ui_wait_time_set());
+
+    lvgl_port_lock(0);
+    reminder_ui_show_clock();
+    lvgl_port_unlock();
+
+    reminder_log_memory();
+    ESP_LOGI(TAG, "Clock screen running");
+
+    vTaskDelete(NULL);
 }
 
 void app_main(void)
@@ -40,6 +84,8 @@ void app_main(void)
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
     }
+
+    ESP_ERROR_CHECK(board_i2c_init());
 
     esp_lcd_panel_io_handle_t lcd_io = NULL;
     esp_lcd_panel_handle_t lcd_panel = NULL;
@@ -62,8 +108,8 @@ void app_main(void)
         .color_format = LV_COLOR_FORMAT_RGB565,
         .rotation = {
             .swap_xy = true,
-            .mirror_x = false,
-            .mirror_y = false,
+            .mirror_x = true,
+            .mirror_y = true,
         },
         .flags = {
             .buff_dma = true,
@@ -79,9 +125,20 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(lvgl_port_add_touch(&touch_cfg) ? ESP_OK : ESP_FAIL);
 
+    ESP_ERROR_CHECK(reminder_ui_init(display));
+
     lvgl_port_lock(0);
-    reminder_create_welcome_screen();
+    reminder_ui_show_init();
+    reminder_ui_set_init_progress(0, "Starting...");
     lvgl_port_unlock();
 
-    ESP_LOGI(TAG, "Reminder welcome screen running");
+    BaseType_t ok = xTaskCreatePinnedToCore(
+        reminder_startup_task,
+        "reminder_start",
+        STARTUP_TASK_STACK,
+        NULL,
+        STARTUP_TASK_PRIORITY,
+        NULL,
+        STARTUP_TASK_CORE);
+    ESP_ERROR_CHECK(ok == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
 }

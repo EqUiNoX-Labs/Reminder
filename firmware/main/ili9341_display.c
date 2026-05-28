@@ -48,6 +48,22 @@ static esp_err_t ili9341_backlight_init(void)
     return ESP_OK;
 }
 
+esp_err_t ili9341_display_fill(esp_lcd_panel_handle_t panel, uint16_t rgb565)
+{
+    uint16_t line[ILI9341_H_RES];
+    for (int x = 0; x < ILI9341_H_RES; x++) {
+        line[x] = rgb565;
+    }
+
+    for (int y = 0; y < ILI9341_V_RES; y++) {
+        ESP_RETURN_ON_ERROR(
+            esp_lcd_panel_draw_bitmap(panel, 0, y, ILI9341_H_RES, y + 1, line),
+            TAG, "panel fill failed");
+    }
+
+    return ESP_OK;
+}
+
 esp_err_t ili9341_display_set_brightness(uint8_t percent)
 {
     if (!s_backlight_ready) {
@@ -106,8 +122,11 @@ esp_err_t ili9341_display_init(esp_lcd_panel_io_handle_t *io_out,
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(panel_handle), TAG, "panel init failed");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_invert_color(panel_handle, true), TAG, "invert failed");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_swap_xy(panel_handle, true), TAG, "swap_xy failed");
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_mirror(panel_handle, false, false), TAG, "mirror failed");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_mirror(panel_handle, true, true), TAG, "mirror failed");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(panel_handle, true), TAG, "display on failed");
+
+    /* Wipe GRAM before backlight — clears ghost from prior firmware/demo. */
+    ESP_RETURN_ON_ERROR(ili9341_display_fill(panel_handle, 0x0000), TAG, "panel clear failed");
 
     ESP_RETURN_ON_ERROR(ili9341_backlight_init(), TAG, "backlight init failed");
     ESP_RETURN_ON_ERROR(ili9341_display_set_brightness(ILI9341_BACKLIGHT_BRIGHTNESS),

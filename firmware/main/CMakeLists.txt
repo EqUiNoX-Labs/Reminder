@@ -1,8 +1,18 @@
 idf_component_register(
     SRCS
         "main.c"
+        "reminder_ui.c"
+        "reminder_storage.c"
+        "fonts/lv_font_clock_mono_58.c"
+        "fonts/lv_font_clock_mono_28.c"
+        "fonts/lv_font_clock_mono_20.c"
+        "board_i2c.c"
         "ili9341_display.c"
         "ft6336u_touch.c"
+        "audio_player.c"
+        "audio_tts.c"
+        "audio_sr.c"
+        "classical_tune.c"
     INCLUDE_DIRS
         "."
     REQUIRES
@@ -15,4 +25,7 @@ idf_component_register(
         lvgl
         esp_lvgl_port
         esp_lcd_touch
+        esp_codec_dev
+        picotts
+        esp-sr
 )
